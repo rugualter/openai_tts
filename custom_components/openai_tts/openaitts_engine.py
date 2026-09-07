@@ -46,6 +46,10 @@ DEFAULT_TIMEOUT_SECONDS = 30
 STREAMING_TIMEOUT_SECONDS = 60
 INITIAL_BUFFER_BYTES = 1024
 
+STREAMING_MODELS = {
+    "gpt-4o-mini-tts",
+}
+
 
 def _classify_http_error(status: int, body_snippet: str = "") -> OpenAITTSError:
     """Map an HTTP status (and optional body) to a typed exception."""
@@ -190,6 +194,11 @@ class OpenAITTSEngine:
         self._url = url
         self._hass = hass
         self._builder = _RequestBuilder(api_key, voice, model, speed)
+
+
+    def _model_supports_streaming(self, model: str | None = None) -> bool:
+        """Return whether the selected model supports SSE TTS streaming."""
+        return (model or self._model) in STREAMING_MODELS
 
     async def _iter_sse_audio(
         self,
@@ -462,6 +471,25 @@ class OpenAITTSEngine:
         decoded and yielded as raw audio bytes to Home Assistant.
         
         """
+        
+        #fallback for models that do not support streaming
+        selected_model = model or self._model
+        
+        if not self._model_supports_streaming(selected_model):
+            response = await asyncio.to_thread(
+                self.get_tts,
+                text,
+                speed,
+                voice,
+                model,
+                instructions,
+                extra_payload,
+                response_format,
+            )
+            yield response.content
+            return
+
+        
         headers, payload = self._builder.build(
             text=text,
             response_format=response_format,
